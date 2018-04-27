@@ -1,42 +1,35 @@
 require('newrelic')
 
-const express = require('express');
-const app = express();
-const port = process.env.PORT || 7000;
-
 const client = require('./config/redis')
 const models = require('./models')
 const sequelize = require('sequelize')
 
-var CronJob = require('cron').CronJob;
-var job = new CronJob('* * * * *', async () => {
+async function flushTweets() {
   console.log('running cron job')
 
   try {
     var tweets = await client.lrangeAsync('writer', 0, 100)
-    client.ltrim('writer', 0, 100)
+    if (!tweets) {
+      return
+    }
+    client.ltrim('writer', 1, tweets.length)
     if (tweets && tweets.length > 0) {
       tweets = tweets.map(tweet => JSON.parse(tweet))
 
-      await models.Tweet.bulkCreate(tweets, { returning: true })
-      .then(users => {
-        for (user in users) {
-          models.User.update(
-              { numTweets: sequelize.literal(`"Users"."numTweets" + 1`) },
-              { where: { id: user.id }
-          });
-        }
+      models.Tweet.bulkCreate(tweets, { returning: true });
 
-      });
-      console.log('success')
+      for (var i = 0; i < tweets.length; ++i) {
+        models.User.update(
+            { numTweets: sequelize.literal(`"Users"."numTweets" + 1`) },
+            { where: { id: tweets[i].user.id }
+        });
+      }
+      process.exit();
     }
   } catch (e) {
     console.log(e)
   }
 
-  }, null,
-  true, /* Start the job right now */
-  'America/Los_Angeles' /* Time zone of this job. */
-);
+}
 
-app.listen(port);
+flushTweets();
